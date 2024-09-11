@@ -1,8 +1,28 @@
 import tkinter as tk
-import random
 from tkinter import *
 from tkinter import messagebox
 import mysql.connector
+
+def show_custom_messagebox(root, title, message, geometry=("300x150")):
+    # Cria uma nova janela de diálogo
+    dialog = tk.Toplevel(root)
+    dialog.title(title)
+    
+    # Define o tamanho inicial da janela
+    dialog.geometry(geometry)
+    
+    # Adiciona uma label para a mensagem
+    label = tk.Label(dialog, text=message, wraplength=400)
+    label.pack(padx=10, pady=10)
+    
+    # Adiciona um botão para fechar a janela
+    button = tk.Button(dialog, text="OK", command=dialog.destroy)
+    button.pack(pady=(0, 10))
+    
+    # Faz a janela modal, bloqueando a interação com a janela principal
+    dialog.transient(root)
+    dialog.grab_set()
+    root.wait_window(dialog)
 
 def create_connection():
     #Conexão com o banco de dados MySQL
@@ -12,7 +32,6 @@ def create_connection():
         password = 'root',
         database = 'renault'
     )
-
     return connection
 
 def convert_to_int(tuple_list):
@@ -21,14 +40,26 @@ def convert_to_int(tuple_list):
         return tuple_list[0][0]
     else:
         raise ValueError("Input must be a list containing a single tuple with a single integer.")
-    
+
+def convert_to_str(tuple_list):
+    return tuple_list[0][0]
+
+def check_array_same_value(*arrays):
+    # Verifica se a lista está vazia ou contém apenas um array
+    if not arrays or len(arrays) == 1:
+        return True
+
+    # Compara cada array com o primeiro
+    primeiro_array = arrays[0]
+    return all(array == primeiro_array for array in arrays)
+
 def default_values_column(id_objetivo):
     # Cria 3 riscos com nomes aleatorios
     try:
         conn = create_connection()
         with conn.cursor() as cursor:
-            for _ in range(3):
-                cursor.execute(f"INSERT INTO riscos (nome_risco, id_objetivo_origem) VALUES ('risco{random.randint(1, 9999)}', {id_objetivo})")
+            for i in range(3):
+                cursor.execute(f"INSERT INTO riscos (nome_risco, id_objetivo_origem) VALUES ('risco{i}', {id_objetivo})")
     
             conn.commit()
     except Exception as e:
@@ -82,6 +113,8 @@ class telaObjetivos(tk.Tk):
 
         self.botaoAdicionar = tk.Button(self, text="Adicionar Objetivo", command=self.adicionaObjetivo)
         self.botaoAdicionar.pack(pady=10)
+        self.botaoRemover = tk.Button(self, text="Remover Objetivo", command=self.removerObjetivo)
+        self.botaoRemover.pack(pady=10)
 
         self.objetivos = self.carregaObjetivos()
         self.ticados = []
@@ -93,11 +126,17 @@ class telaObjetivos(tk.Tk):
         self.botaoRiscos = tk.Button(self, text="Adicionar Risco", command=self.adicionarRisco)
         self.botaoRiscos.pack(pady=10)
 
+        self.removerRiscos = tk.Button(self, text="Remover Risco", command=self.removerRisco)
+        self.removerRiscos.pack(pady=10)
+
         self.botaoProximo = tk.Button(self, text="🡆", command=self.excluiResto)
         self.botaoProximo.pack(side=tk.BOTTOM, anchor=tk.SE, padx=10, pady=10)
 
     def adicionarRisco(self):
         JanelaAddRisco(self)
+
+    def removerRisco(self):
+        JanelaRemoverRisco(self)
 
     def carregaObjetivos(self):
         conn = create_connection()
@@ -130,6 +169,11 @@ class telaObjetivos(tk.Tk):
 
     def adicionaObjetivo(self):
         JanelaAddObjetivo(self)
+        self.atualizaObjetivos()
+    
+    def removerObjetivo(self):
+        JanelaRemoverObjetivo(self)
+        self.atualizaObjetivos()
 
     def excluiResto(self):
         self.ticados = [objetivo for objetivo, taTicado in zip(self.objetivos, self.ticados) if taTicado.get()]
@@ -140,24 +184,32 @@ class telaObjetivos(tk.Tk):
             return
 
         self.ticados_id = []
-        
-        row_numbers = []
+    
+        infos = []
 
         for tick in self.ticados:
             self.ticados_id.append(tick[0])
 
             conn = create_connection()
             cursor = conn.cursor()
-            cursor.execute(f"SELECT * FROM riscos WHERE id_objetivo_origem = {tick[0]}")
+            cursor.execute(f"SELECT nome_risco FROM riscos WHERE id_objetivo_origem = {tick[0]}")
             all_info = cursor.fetchall()
-            qtd_risco = cursor.rowcount
+            transform_to_list = [item for final_info in all_info for item in final_info]
+            infos.append(transform_to_list)
             conn.close()
-            row_numbers.append(qtd_risco)
 
-        # checando se todas as tabelas tem o mesmo tanto de riscos
-        if(len(row_numbers) == len(set(row_numbers))):
-            messagebox.showwarning("showwarning", f"Os objetivos selecionados tem números de riscos diferentes {row_numbers}")
+        if not check_array_same_value(*infos):
+            full_str = "Os objetivos possuem riscos diferentes: "
+
+            for i in range(len(self.ticados_id)):
+                full_str += f"\nRisco: {self.ticados[i][1]} - {infos[i]}"
+
+            self.ticados = []
+            self.atualizaObjetivos()
+
+            show_custom_messagebox(self, "Erro de conflito", full_str, "400x150")
             return
+        
 
         self.destroy()
         self.nova_tela()
@@ -168,6 +220,104 @@ class telaObjetivos(tk.Tk):
     def nova_tela(self):
         nova_tela = telaPeso(self.ticados_id)
         nova_tela.mainloop()
+
+class JanelaRemoverRisco(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.resizable(False, False)
+        self.title("Remover Risco")
+        self.geometry("400x300")
+        self.parent = parent
+
+        self.show_first_window()
+
+    def show_first_window(self):
+        conn = create_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT nome_objetivo FROM objetivos")
+        objetivos_query = cursor.fetchall()
+
+        objetivos_array = [list(item) for item in objetivos_query]
+        nomes_objetivos = [risco[0] for risco in objetivos_array]
+
+        lista_objetivos = nomes_objetivos
+        conn.close()
+
+        self.lb_objetivos = Listbox(self)
+        for objetivos in lista_objetivos:
+            self.lb_objetivos.insert(END, objetivos)
+        self.lb_objetivos.select_set(0)
+        self.lb_objetivos.pack()
+
+        tk.Button(self, text="Selecionar Objetivo", command=self.select_risks).pack()
+
+    def select_risks(self):
+        objetivo_selecionado = self.lb_objetivos.get(ACTIVE)
+
+        if objetivo_selecionado == "":
+            show_custom_messagebox(self, "Erro", "Você precisa selecionar um objetivo")
+            return
+
+        self.clear_window()
+
+        conn = create_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT id FROM objetivos WHERE nome_objetivo = '{objetivo_selecionado}'")
+        self.id_objetivo_selecionado = cursor.fetchall()
+        self.id_objetivo_selecionado = convert_to_int(self.id_objetivo_selecionado)
+        conn.commit()
+        cursor.execute(f"SELECT nome_risco FROM riscos WHERE id_objetivo_origem = {self.id_objetivo_selecionado}")
+        riscos_query = cursor.fetchall()
+        riscos_array = [list(item) for item in riscos_query]
+        nomes_riscos = [risco[0] for risco in riscos_array]
+        conn.commit()
+        conn.close()
+
+        self.lb_riscos = Listbox(self)
+        for risco in nomes_riscos:
+            self.lb_riscos.insert(END, risco)
+        self.lb_riscos.select_set(0)
+        self.lb_riscos.pack()
+
+        tk.Button(self, text="Remover", command=self.remove_risk).pack()
+
+    def remove_risk(self):
+        
+        risk_to_remove = self.lb_riscos.get(ACTIVE)
+
+        conn = create_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"DELETE FROM riscos WHERE nome_risco = '{risk_to_remove}' AND id_objetivo_origem = {self.id_objetivo_selecionado}")
+        conn.commit()
+        conn.close()
+        self.update_db_removing_old_risks(risk_to_remove)
+        self.destroy()
+
+    def update_db_removing_old_risks(self, risk):
+        
+        conn = create_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT id, nome_combinacao FROM pesos WHERE id_objetivo_origem = {self.id_objetivo_selecionado}")
+        pesos_query = cursor.fetchall()
+        pesos_array = [list(item) for item in pesos_query]
+
+        if pesos_array == []:
+            return
+
+        for peso in pesos_array:
+            peso_id = peso[0]
+            nome_peso = peso[1]
+
+            nome1, nome2 = nome_peso.split("X")
+
+            if nome1 == risk or nome2 == risk:
+                cursor.execute(f"DELETE FROM pesos WHERE id = {peso_id}")
+                conn.commit()
+        conn.close()
+
+    def clear_window(self):
+        for widget in self.winfo_children():
+            widget.destroy()
 
 class JanelaAddRisco(tk.Toplevel):
     def __init__(self, parent):
@@ -201,13 +351,22 @@ class JanelaAddRisco(tk.Toplevel):
 
     def adicionarRisco(self):
         objetivo_marcado = self.lb_objetivos.get(ACTIVE)
-        print(objetivo_marcado)
         novo_risco = self.entryRisco.get()
-        print(novo_risco)
+        if objetivo_marcado == "" or novo_risco.replace(" ", "") == "":
+            string = ""
+            if objetivo_marcado == "":
+                string = "Você precisa marcar um objetivo"
+            else:
+                string = "Você precisa preencher o nome do risco"
 
-        if novo_risco.replace(" ", "") == "":
-            messagebox.showwarning("showwarning", "Valores faltando")
+            show_custom_messagebox(self, "Erro", string)
             return
+        
+        if self.check_risk_exists(novo_risco):
+            show_custom_messagebox(self, "Erro", "Já existe um risco com esse nome+")
+            return
+
+
         #pegando o id do objetivo da lista
         conn = create_connection()
         cursor = conn.cursor()
@@ -219,6 +378,65 @@ class JanelaAddRisco(tk.Toplevel):
         conn.commit()
         conn.close()
         self.destroy()
+
+    def check_risk_exists(self, risk):
+        
+        conn = create_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT * FROM riscos WHERE nome_risco = '{risk}'")
+        cursor.fetchall()
+        row = cursor.rowcount
+        conn.close()
+        
+        return row > 0
+
+class JanelaRemoverObjetivo(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.resizable(False, False)
+        self.title("Remover Objetivo")
+        self.geometry("300x250")
+        self.parent = parent
+
+        conn = create_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT nome_objetivo FROM objetivos")
+        objetivos_query = cursor.fetchall()
+        conn.close()
+
+        objetivos_array = [list(item) for item in objetivos_query]
+        nomes_objetivos = [risco[0] for risco in objetivos_array]
+    
+        self.lb_objetivos_remove = Listbox(self)
+        for objetivo in nomes_objetivos:
+            self.lb_objetivos_remove.insert(END, objetivo)
+        self.lb_objetivos_remove.select_set(0)
+        self.lb_objetivos_remove.pack()
+
+        Button(self, text="Remover Objetivo", command=self.remove_objetivo).pack()
+
+    def remove_objetivo(self):
+        objetivo_to_remove = self.lb_objetivos_remove.get(ACTIVE)
+
+        if objetivo_to_remove == "":
+            show_custom_messagebox(self, "Erro", "Você precisa selecionar um objetivo")
+            return
+        
+        self.remove_all_from_db(objetivo_to_remove)
+        self.parent.atualizaObjetivos()
+
+        self.destroy()
+
+    def remove_all_from_db(self, nome_objetivo):
+        conn = create_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT id FROM objetivos WHERE nome_objetivo = '{nome_objetivo}'")
+        id = cursor.fetchall()
+        id = convert_to_int(id)
+        cursor.execute(f"DELETE pesos, riscos FROM pesos INNER JOIN riscos WHERE pesos.id_objetivo_origem = riscos.id_objetivo_origem AND pesos.id_objetivo_origem = {id}")
+        cursor.execute(f"DELETE FROM objetivos WHERE nome_objetivo = '{nome_objetivo}'")
+        conn.commit()
+        conn.close()
 
 class JanelaAddObjetivo(tk.Toplevel):
     def __init__(self, parent):
@@ -239,6 +457,11 @@ class JanelaAddObjetivo(tk.Toplevel):
 
     def adicionarObjetivo(self):
         novoObjetivo = self.entryObjetivo.get()
+
+        if novoObjetivo.replace(" ", "") == "":
+            show_custom_messagebox(self, "Erro", "Você precisa dar um nome ao objetivo")
+            return
+
         try:
             conn = create_connection()
             cursor = conn.cursor()
@@ -260,13 +483,13 @@ class JanelaAddObjetivo(tk.Toplevel):
                 cursor.execute(query)
             else:
                 messagebox.showwarning("showwarning", "Objetivo já cadastrado")
+                return
                     
             conn.commit()
 
             cursor.execute(f"SELECT id FROM objetivos where nome_objetivo = '{novoObjetivo}'")
             id = cursor.fetchall()
             id = convert_to_int(id)
-            print(f"id nova tabela: {id}")
             conn.commit()
             conn.close()
             self.parent.objetivos.append(novoObjetivo) 
@@ -310,6 +533,14 @@ class telaPeso(tk.Tk):
         risks_array = [list(item) for item in all_risks]
         nomes_riscos_array = [risco[1] for risco in risks_array]
 
+        conn = create_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT nome_objetivo FROM objetivos WHERE id = {self.objetivos_id[page-1]}")
+        nome_obj = cursor.fetchall()
+        conn.close()
+
+        Label(self.page_frame, text=convert_to_str(nome_obj), font=("Arial", 24), wraplength=250).place(x=self.window_width/2 - 370, y=10)
+
         combinacoes = []
         self.entries = {}
 
@@ -337,7 +568,7 @@ class telaPeso(tk.Tk):
             if combinacao not in pesos_lista:
                 conn = create_connection()
                 cursor = conn.cursor()
-                cursor.execute(f"INSERT INTO pesos (nome_combinacao, peso_combinacao, id_objetivo_origem) VALUES ('{combinacao}', 1, {self.objetivos_id[page - 1]})")
+                cursor.execute(f"INSERT INTO pesos (nome_combinacao, peso_combinacao, id_objetivo_origem) VALUES ('{combinacao}', 1, {self.objetivos_id[page - 1]}); ")
                 conn.commit()
                 conn.close()
 
@@ -355,9 +586,12 @@ class telaPeso(tk.Tk):
             self.entries[combinacao] = entry
             i += 1
 
-        if self.current_page < self.total_pages:
-            self.next_button = tk.Button(self.page_frame, text="Next", command=self.change_pages_next)
-            self.next_button.place(x=self.window_width-300, y=self.window_height-100)
+        if self.current_page <= self.total_pages:
+            if self.total_pages != 1:
+                self.next_button = tk.Button(self.page_frame, text="Next", command=self.change_pages_next)
+                self.next_button.place(x=self.window_width-300, y=self.window_height-100)
+            self.home_button = tk.Button(self.page_frame, text="Home", command=self.back_to_home)
+            self.home_button.place(x=250, y=self.window_height-100)
         if self.current_page > 1:
             self.back_button = tk.Button(self.page_frame, text="Previous", command=self.change_pages_previous)
             self.back_button.place(x=250, y=self.window_height-100)
@@ -367,6 +601,11 @@ class telaPeso(tk.Tk):
 
         self.peso_info = tk.Button(self.page_frame, text="Help", command=self.show_help_info)
         self.peso_info.place(x=self.window_width/2 - 10, y=self.window_height - 100)
+
+    def back_to_home(self):
+        self.destroy()
+        telaObjetivos()
+        return
 
     def change_pages_next(self):
         dados = self.get_entries_values()
@@ -431,10 +670,11 @@ class telaPeso(tk.Tk):
         values = self.get_entries_values()
 
         conn = create_connection()
+        cursor = conn.cursor()
+        full_query = ""
         for key, value in values.items():
-            cursor = conn.cursor()
-            cursor.execute(f"UPDATE pesos SET peso_combinacao = {value} WHERE nome_combinacao = '{key}'")
-            conn.commit()
+            full_query += f"UPDATE pesos SET peso_combinacao = {value} WHERE nome_combinacao = '{key}' AND id_objetivo_origem = {self.objetivos_id[self.current_page - 1]}; commit; "
+        cursor.execute(full_query)
         conn.close()
         return
 
